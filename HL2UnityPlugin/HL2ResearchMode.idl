@@ -60,6 +60,7 @@ namespace HL2UnityPlugin
         void StartDepthSensorLoop(Boolean reconstructPointCloud);
         void StartLongDepthSensorLoop();
         void StartLongDepthSensorLoop(Boolean reconstructPointCloud);
+        void StartLongDepthSensorLoop(Boolean reconstructPointCloud, Boolean streamRawSensorDataToRosbridge);
 		void StartSpatialCamerasFrontLoop();
         void StartAccelSensorLoop();
         void StartGyroSensorLoop();
@@ -70,5 +71,8 @@ namespace HL2UnityPlugin
         void SetReferenceCoordinateSystem(Windows.Perception.Spatial.SpatialCoordinateSystem refCoord);
         void SetPointCloudRoiInSpace(Single centerX, Single centerY, Single centerZ, Single boundX, Single boundY, Single boundZ);
         void SetPointCloudDepthOffset(UInt16 offset);
+
+        void SetRosbridgeServerUri(String rosbridgeUri);
+        Boolean IsConnectedToRosbridge();
     }
 }

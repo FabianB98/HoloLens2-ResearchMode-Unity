@@ -13,11 +13,14 @@
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
     <ClCompile Include="TimeConverter.cpp" />
+    <ClCompile Include="Base64.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="ResearchModeApi.h" />
     <ClInclude Include="TimeConverter.h" />
+    <ClInclude Include="Base64.h" />
+    <ClInclude Include="PixelDirection.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="HL2UnityPlugin.def" />

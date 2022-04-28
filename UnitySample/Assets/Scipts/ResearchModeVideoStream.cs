@@ -22,6 +22,8 @@ public class ResearchModeVideoStream : MonoBehaviour
     };
     [SerializeField] DepthSensorMode depthSensorMode = DepthSensorMode.ShortThrow;
     [SerializeField] bool enablePointCloud = true;
+    [SerializeField] bool streamRawSensorDataToRosbridge = true;
+    [SerializeField] string rosbridgeUri = "";
 
     TCPClient tcpClient;
 
@@ -150,8 +152,10 @@ public class ResearchModeVideoStream : MonoBehaviour
         researchMode.SetReferenceCoordinateSystem(unityWorldOrigin);
         researchMode.SetPointCloudDepthOffset(0);
 
+        researchMode.SetRosbridgeServerUri(rosbridgeUri);
+
         // Depth sensor should be initialized in only one mode
-        if (depthSensorMode == DepthSensorMode.LongThrow) researchMode.StartLongDepthSensorLoop(enablePointCloud);
+        if (depthSensorMode == DepthSensorMode.LongThrow) researchMode.StartLongDepthSensorLoop(enablePointCloud, streamRawSensorDataToRosbridge);
         else if (depthSensorMode == DepthSensorMode.ShortThrow) researchMode.StartDepthSensorLoop(enablePointCloud);
 
         researchMode.StartSpatialCamerasFrontLoop();
@@ -312,7 +316,7 @@ public class ResearchModeVideoStream : MonoBehaviour
                 {
                     pointCloudVector3[i] = new Vector3(pointCloud[3 * i], pointCloud[3 * i + 1], pointCloud[3 * i + 2]);
                 }
-                text.text = "Point Cloud Length: " + pointCloudVector3.Length.ToString();
+                text.text = "Point Cloud Length: " + pointCloudVector3.Length.ToString() + "\nConnected to Rosbridge: " + researchMode.IsConnectedToRosbridge();
                 pointCloudRenderer.Render(pointCloudVector3, pointColor);
             }
         }

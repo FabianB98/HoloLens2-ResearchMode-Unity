@@ -1,6 +1,8 @@
 #pragma once
 #include "HL2ResearchMode.g.h"
 #include "ResearchModeApi.h"
+#include "Base64.h"
+#include "PixelDirection.h"
 #include "TimeConverter.h"
 #include <stdio.h>
 #include <iostream>
@@ -13,8 +15,12 @@
 #include <cmath>
 #include <DirectXMath.h>
 #include <vector>
-#include<winrt/Windows.Perception.Spatial.h>
-#include<winrt/Windows.Perception.Spatial.Preview.h>
+#include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Networking.Sockets.h>
+#include <winrt/Windows.Perception.Spatial.h>
+#include <winrt/Windows.Perception.Spatial.Preview.h>
+#include <winrt/Windows.Storage.Streams.h>
 
 namespace winrt::HL2UnityPlugin::implementation
 {
@@ -40,7 +46,7 @@ namespace winrt::HL2UnityPlugin::implementation
         void InitializeMagSensor();
 
         void StartDepthSensorLoop(bool reconstructPointCloud = true);
-        void StartLongDepthSensorLoop(bool reconstructPointCloud = true);
+        void StartLongDepthSensorLoop(bool reconstructPointCloud = true, bool streamRawSensorDataToRosbridge = true);
         void StartSpatialCamerasFrontLoop();
         void StartAccelSensorLoop();
         void StartGyroSensorLoop();
@@ -84,6 +90,16 @@ namespace winrt::HL2UnityPlugin::implementation
         com_array<float> GetLongThrowPointCloudBuffer();
         com_array<float> GetCenterPoint();
         std::mutex mu;
+
+        void SetRosbridgeServerUri(const winrt::hstring rosbridgeUri)
+        {
+            m_rosbridgeUri = rosbridgeUri;
+        }
+
+        bool IsConnectedToRosbridge()
+        {
+            return m_connectedToRosbridge;
+        }
 
     private:
         float* m_pointCloud = nullptr;
@@ -154,6 +170,12 @@ namespace winrt::HL2UnityPlugin::implementation
 
         std::atomic_bool m_reconstructShortThrowPointCloud = false;
         std::atomic_bool m_reconstructLongThrowPointCloud = false;
+
+        winrt::hstring m_rosbridgeUri = L"";
+        std::atomic_bool m_connectedToRosbridge = false;
+
+        std::atomic_bool m_streamRawLongThrowSensorDataToRosbridge = false;
+        std::atomic_bool m_longThrowPixelDirectionsSent = false;
 
         float m_roiBound[3]{ 0,0,0 };
         float m_roiCenter[3]{ 0,0,0 };

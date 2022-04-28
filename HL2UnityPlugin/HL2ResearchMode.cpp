@@ -2,6 +2,15 @@
 #include "HL2ResearchMode.h"
 #include "HL2ResearchMode.g.cpp"
 
+#define SHORT_THROW_PIXEL_DIRECTIONS_TOPIC L"/hololensShortThrowPixelDirections"
+#define LONG_THROW_PIXEL_DIRECTIONS_TOPIC L"/hololensLongThrowPixelDirections"
+
+#define SHORT_THROW_DEPTH_TOPIC L"/hololensShortThrowDepth"
+#define LONG_THROW_DEPTH_TOPIC L"/hololensLongThrowDepth"
+
+#define PIXEL_DIRECTIONS_MESSAGE_TYPE L"hololens_point_cloud_msgs/PixelDirections"
+#define DEPTH_FRAME_MESSAGE_TYPE L"hololens_point_cloud_msgs/DepthFrame"
+
 extern "C"
 HMODULE LoadLibraryA(
     LPCSTR lpLibFileName
@@ -364,13 +373,14 @@ namespace winrt::HL2UnityPlugin::implementation
         
     }
 
-    void HL2ResearchMode::StartLongDepthSensorLoop(bool reconstructPointCloud)
+    void HL2ResearchMode::StartLongDepthSensorLoop(bool reconstructPointCloud, bool streamRawSensorDataToRosbridge)
     {
-        if (reconstructPointCloud && m_refFrame == nullptr)
+        if ((reconstructPointCloud || streamRawSensorDataToRosbridge) && m_refFrame == nullptr)
         {
             m_refFrame = m_locator.GetDefault().CreateStationaryFrameOfReferenceAtCurrentLocation().CoordinateSystem();
         }
         m_reconstructLongThrowPointCloud = reconstructPointCloud;
+        m_streamRawLongThrowSensorDataToRosbridge = streamRawSensorDataToRosbridge;
 
         m_pLongDepthUpdateThread = new std::thread(HL2ResearchMode::LongDepthSensorLoop, this);
     }
@@ -387,6 +397,45 @@ namespace winrt::HL2UnityPlugin::implementation
         }
 
         pHL2ResearchMode->m_longDepthSensor->OpenStream();
+        
+        pHL2ResearchMode->m_connectedToRosbridge = false;
+        Windows::Networking::Sockets::MessageWebSocket websocket;
+        Windows::Storage::Streams::DataWriter dataWriter;
+        if (pHL2ResearchMode->m_streamRawLongThrowSensorDataToRosbridge)
+        {
+            try
+            {
+                Windows::Foundation::Uri uri = Windows::Foundation::Uri(pHL2ResearchMode->m_rosbridgeUri);
+                websocket = Windows::Networking::Sockets::MessageWebSocket();
+                websocket.Control().MessageType(Windows::Networking::Sockets::SocketMessageType::Utf8);
+
+                websocket.ConnectAsync(uri).get();
+                pHL2ResearchMode->m_connectedToRosbridge = true;
+                std::cout << "Established connection to a Rosbridge websocket!" << std::endl;
+
+                dataWriter = Windows::Storage::Streams::DataWriter(websocket.OutputStream());
+
+                dataWriter.WriteString(L"{\"op\":\"advertise\",\"topic\":\"");
+                dataWriter.WriteString(LONG_THROW_PIXEL_DIRECTIONS_TOPIC);
+                dataWriter.WriteString(L"\",\"type\":\"");
+                dataWriter.WriteString(PIXEL_DIRECTIONS_MESSAGE_TYPE);
+                dataWriter.WriteString(L"\"}");
+                dataWriter.StoreAsync().get();
+
+                dataWriter.WriteString(L"{\"op\":\"advertise\",\"topic\":\"");
+                dataWriter.WriteString(LONG_THROW_DEPTH_TOPIC);
+                dataWriter.WriteString(L"\",\"type\":\"");
+                dataWriter.WriteString(DEPTH_FRAME_MESSAGE_TYPE);
+                dataWriter.WriteString(L"\"}");
+                dataWriter.StoreAsync().get();
+            }
+            catch (...)
+            {
+                std::cout << "Connection to a Rosbridge websocket couldn't be established!" << std::endl;
+
+                pHL2ResearchMode->m_connectedToRosbridge = false;
+            }
+        }
 
         try
         {
@@ -427,14 +476,14 @@ namespace winrt::HL2UnityPlugin::implementation
 
                 // get tracking transform
                 Windows::Perception::Spatial::SpatialLocation transToWorld = nullptr;
-                if (pHL2ResearchMode->m_reconstructLongThrowPointCloud)
+                if (pHL2ResearchMode->m_reconstructLongThrowPointCloud || pHL2ResearchMode->m_streamRawLongThrowSensorDataToRosbridge)
                 {
                     auto ts = PerceptionTimestampHelper::FromSystemRelativeTargetTime(HundredsOfNanoseconds(checkAndConvertUnsigned(timestamp.HostTicks)));
                     transToWorld = pHL2ResearchMode->m_locator.TryLocateAtTimestamp(ts, pHL2ResearchMode->m_refFrame);
                     if (transToWorld == nullptr) continue;
                 }
                 XMMATRIX depthToWorld = XMMatrixIdentity();
-                if (pHL2ResearchMode->m_reconstructLongThrowPointCloud)
+                if (pHL2ResearchMode->m_reconstructLongThrowPointCloud || pHL2ResearchMode->m_streamRawLongThrowSensorDataToRosbridge)
                     depthToWorld = pHL2ResearchMode->m_longDepthCameraPoseInvMatrix * SpatialLocationToDxMatrix(transToWorld);
 
                 pHL2ResearchMode->mu.lock();
@@ -505,6 +554,115 @@ namespace winrt::HL2UnityPlugin::implementation
                                 pHL2ResearchMode->m_centerPoint[2] = *(pointCloud.end() - 1);
                             }
                         }
+                    }
+                }
+
+                // stream data to Rosbridge
+                if (pHL2ResearchMode->m_streamRawLongThrowSensorDataToRosbridge && pHL2ResearchMode->m_connectedToRosbridge)
+                {
+                    if (!pHL2ResearchMode->m_longThrowPixelDirectionsSent)
+                    { 
+                        std::vector<PixelDirection> pixelDirections;
+
+                        // Iterate over all pixels of the depth camera image.
+                        for (UINT u = 0; u < resolution.Height; u++)
+                        {
+                            for (UINT v = 0; v < resolution.Width; v++)
+                            {
+                                // Calculate the direction (in camera view space) in which the current pixel points at.
+                                float xy[2] = { 0, 0 };
+                                float uv[2] = { static_cast<float>(u), static_cast<float>(v) };
+                                pHL2ResearchMode->m_pLongDepthCameraSensor->MapImagePointToCameraUnitPlane(uv, xy);
+                                Windows::Foundation::Numerics::float3 direction = Windows::Foundation::Numerics::float3(xy[0], xy[1], 1.0);
+                                direction = Windows::Foundation::Numerics::normalize(direction);
+
+                                // Add the direction to the resulting pixel directions.
+                                pixelDirections.push_back(PixelDirection(u, v, direction));
+                            }
+                        }
+
+                        std::cout << "Got " << pixelDirections.size() << " pixel directions!" << std::endl;
+
+                        // Send the pixel directions to ROS.
+                        try
+                        {
+                            dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
+                            dataWriter.WriteString(LONG_THROW_PIXEL_DIRECTIONS_TOPIC);
+                            dataWriter.WriteString(L"\",\"msg\":{\"pixelDirections\":[");
+                            for (size_t i = 0; i < pixelDirections.size(); i++)
+                            {
+                                dataWriter.WriteString(L"{\"u\":");
+                                dataWriter.WriteString(to_hstring(pixelDirections[i].u));
+                                dataWriter.WriteString(L",\"v\":");
+                                dataWriter.WriteString(to_hstring(pixelDirections[i].v));
+                                dataWriter.WriteString(L",\"direction\":{\"x\":");
+                                dataWriter.WriteString(to_hstring(pixelDirections[i].direction.x));
+                                dataWriter.WriteString(L",\"y\":");
+                                dataWriter.WriteString(to_hstring(pixelDirections[i].direction.y));
+                                dataWriter.WriteString(L",\"z\":");
+                                dataWriter.WriteString(to_hstring(pixelDirections[i].direction.z));
+                                dataWriter.WriteString(L"}}");
+                                if (i < pixelDirections.size() - 1)
+                                {
+                                    dataWriter.WriteString(L",");
+                                }
+                            }
+                            dataWriter.WriteString(L"]}}");
+                            dataWriter.StoreAsync().get();
+
+                            pHL2ResearchMode->m_longThrowPixelDirectionsSent = true;
+                        }
+                        catch (...)
+                        {
+                            std::cout << "Pixel directions couldn't be sent to the Rosbridge websocket!" << std::endl;
+                        }
+                    }
+
+                    // Encode depth image in Base64.
+                    UINT8* depthBytes = (UINT8*)pDepth;
+                    UINT32 pixelStride = 2; // Depth images captured by the HoloLens 2 have 16 bit (= 2 byte) per pixel of depth information.
+                    int32_t imageBufferSize = resolution.Width * resolution.Height * pixelStride;
+                    std::string depthEncoded = base64_encode(depthBytes, imageBufferSize);
+
+                    // Get the translation vector and the rotation quaternion from the transformation matrix.
+                    XMVECTOR scaleVector;           // This should always be equal to a scale of 1.0 so we don't have to transmit it to ROS.
+                    XMVECTOR rotationQuaternion;
+                    XMVECTOR translationVector;
+                    XMMatrixDecompose(&scaleVector, &rotationQuaternion, &translationVector, depthToWorld);
+
+                    // Send everything (i.e. encoded depth image, width, height, pixel stride, translation and rotation) to ROS.
+                    try
+                    {
+                        dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
+                        dataWriter.WriteString(LONG_THROW_DEPTH_TOPIC);
+                        dataWriter.WriteString(L"\",\"msg\":{\"depthMapWidth\":");
+                        dataWriter.WriteString(to_hstring(resolution.Width));
+                        dataWriter.WriteString(L",\"depthMapHeight\":");
+                        dataWriter.WriteString(to_hstring(resolution.Height));
+                        dataWriter.WriteString(L",\"depthMapPixelStride\":");
+                        dataWriter.WriteString(to_hstring(pixelStride));
+                        dataWriter.WriteString(L",\"base64encodedDepthMap\":\"");
+                        dataWriter.WriteString(to_hstring(depthEncoded.c_str()));
+                        dataWriter.WriteString(L"\",\"camToWorldTranslation\":{\"x\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetX(translationVector)));
+                        dataWriter.WriteString(L",\"y\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetY(translationVector)));
+                        dataWriter.WriteString(L",\"z\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVector)));
+                        dataWriter.WriteString(L"},\"camToWorldRotation\":{\"w\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternion)));
+                        dataWriter.WriteString(L",\"x\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternion)));
+                        dataWriter.WriteString(L",\"y\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternion)));
+                        dataWriter.WriteString(L",\"z\":");
+                        dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternion)));
+                        dataWriter.WriteString(L"}}}");
+                        dataWriter.StoreAsync().get();  // Waiting for the data to be finished sending is definitely not performant. This needs to be changed in the future.
+                    }
+                    catch (...)
+                    {
+                        std::cout << "Depth image couldn't be sent to the Rosbridge websocket!" << std::endl;
                     }
                 }
 
@@ -579,6 +737,11 @@ namespace winrt::HL2UnityPlugin::implementation
         pHL2ResearchMode->m_longDepthSensor->Release();
         pHL2ResearchMode->m_longDepthSensor = nullptr;
 
+        if (pHL2ResearchMode->m_connectedToRosbridge)
+        {
+            dataWriter.DetachStream();
+            websocket.Close();
+        }
     }
 
     void HL2ResearchMode::StartSpatialCamerasFrontLoop()
