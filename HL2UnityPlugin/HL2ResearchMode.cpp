@@ -8,8 +8,8 @@
 #define SHORT_THROW_DEPTH_TOPIC L"/hololensShortThrowDepth"
 #define LONG_THROW_DEPTH_TOPIC L"/hololensLongThrowDepth"
 
-#define PIXEL_DIRECTIONS_MESSAGE_TYPE L"hololens_point_cloud_msgs/PixelDirections"
-#define DEPTH_FRAME_MESSAGE_TYPE L"hololens_point_cloud_msgs/DepthFrame"
+#define PIXEL_DIRECTIONS_MESSAGE_TYPE L"hololens_msgs/PixelDirections"
+#define DEPTH_FRAME_MESSAGE_TYPE L"hololens_msgs/DepthFrame"
 
 extern "C"
 HMODULE LoadLibraryA(
@@ -565,9 +565,9 @@ namespace winrt::HL2UnityPlugin::implementation
                         std::vector<PixelDirection> pixelDirections;
 
                         // Iterate over all pixels of the depth camera image.
-                        for (UINT u = 0; u < resolution.Height; u++)
+                        for (UINT v = 0; v < resolution.Height; v++)
                         {
-                            for (UINT v = 0; v < resolution.Width; v++)
+                            for (UINT u = 0; u < resolution.Width; u++)
                             {
                                 // Calculate the direction (in camera view space) in which the current pixel points at.
                                 float xy[2] = { 0, 0 };

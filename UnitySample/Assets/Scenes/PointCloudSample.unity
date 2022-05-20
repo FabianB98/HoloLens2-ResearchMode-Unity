@@ -1769,7 +1769,7 @@ MonoBehaviour:
   depthSensorMode: 1
   enablePointCloud: 1
   streamRawSensorDataToRosbridge: 1
-  rosbridgeUri: ws://141.3.81.59:9090
+  rosbridgeUri: ws://141.3.81.144:9090
   depthPreviewPlane: {fileID: 456786859}
   shortAbImagePreviewPlane: {fileID: 349520856}
   longDepthPreviewPlane: {fileID: 891683166}
