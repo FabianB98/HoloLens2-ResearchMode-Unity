@@ -620,9 +620,15 @@ namespace winrt::HL2UnityPlugin::implementation
 
                     // Encode depth image in Base64.
                     UINT8* depthBytes = (UINT8*)pDepth;
-                    UINT32 pixelStride = 2; // Depth images captured by the HoloLens 2 have 16 bit (= 2 byte) per pixel of depth information.
-                    int32_t imageBufferSize = resolution.Width * resolution.Height * pixelStride;
+                    UINT32 depthPixelStride = 2;    // Depth images captured by the HoloLens 2 have 16 bit (= 2 byte) per pixel of depth information.
+                    int32_t imageBufferSize = resolution.Width * resolution.Height * depthPixelStride;
                     std::string depthEncoded = base64_encode(depthBytes, imageBufferSize);
+
+                    // Encode active brightness / reflectivity in Base64.
+                    UINT8* reflectivityBytes = (UINT8*)pAbImage;
+                    UINT32 reflectivityPixelStride = 2;     // Active brightness images captured by the HoloLens 2 have 16 bit (= 2 byte) per pixel of depth information.
+                    imageBufferSize = resolution.Width * resolution.Height * reflectivityPixelStride;
+                    std::string reflectivityEncoded = base64_encode(reflectivityBytes, imageBufferSize);
 
                     // Get the translation vector and the rotation quaternion from the transformation matrix.
                     XMVECTOR scaleVector;           // This should always be equal to a scale of 1.0 so we don't have to transmit it to ROS.
@@ -640,9 +646,13 @@ namespace winrt::HL2UnityPlugin::implementation
                         dataWriter.WriteString(L",\"depthMapHeight\":");
                         dataWriter.WriteString(to_hstring(resolution.Height));
                         dataWriter.WriteString(L",\"depthMapPixelStride\":");
-                        dataWriter.WriteString(to_hstring(pixelStride));
+                        dataWriter.WriteString(to_hstring(depthPixelStride));
+                        dataWriter.WriteString(L",\"reflectivityPixelStride\":");
+                        dataWriter.WriteString(to_hstring(reflectivityPixelStride));
                         dataWriter.WriteString(L",\"base64encodedDepthMap\":\"");
                         dataWriter.WriteString(to_hstring(depthEncoded.c_str()));
+                        dataWriter.WriteString(L"\",\"base64encodedReflectivity\":\"");
+                        dataWriter.WriteString(to_hstring(reflectivityEncoded.c_str()));
                         dataWriter.WriteString(L"\",\"camToWorldTranslation\":{\"x\":");
                         dataWriter.WriteString(to_hstring(XMVectorGetX(translationVector)));
                         dataWriter.WriteString(L",\"y\":");
