@@ -15,6 +15,7 @@
 #include <cmath>
 #include <DirectXMath.h>
 #include <vector>
+#include <string>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Networking.Sockets.h>
@@ -98,7 +99,7 @@ namespace winrt::HL2UnityPlugin::implementation
 
         bool IsConnectedToRosbridge()
         {
-            return m_connectedToRosbridge;
+            return m_longThrowConnectedToRosbridge;
         }
 
     private:
@@ -172,7 +173,7 @@ namespace winrt::HL2UnityPlugin::implementation
         std::atomic_bool m_reconstructLongThrowPointCloud = false;
 
         winrt::hstring m_rosbridgeUri = L"";
-        std::atomic_bool m_connectedToRosbridge = false;
+        std::atomic_bool m_longThrowConnectedToRosbridge = false;
 
         std::atomic_bool m_streamRawLongThrowSensorDataToRosbridge = false;
         std::atomic_bool m_longThrowPixelDirectionsSent = false;
