@@ -62,6 +62,7 @@ namespace HL2UnityPlugin
         void StartLongDepthSensorLoop(Boolean reconstructPointCloud);
         void StartLongDepthSensorLoop(Boolean reconstructPointCloud, Boolean streamRawSensorDataToRosbridge);
 		void StartSpatialCamerasFrontLoop();
+        void StartSpatialCamerasFrontLoop(Boolean streamRawSensorDataToRosbridge);
         void StartAccelSensorLoop();
         void StartGyroSensorLoop();
         void StartMagSensorLoop();
@@ -72,7 +73,13 @@ namespace HL2UnityPlugin
         void SetPointCloudRoiInSpace(Single centerX, Single centerY, Single centerZ, Single boundX, Single boundY, Single boundZ);
         void SetPointCloudDepthOffset(UInt16 offset);
 
+        Boolean IsStreamRawLongThrowSensorDataToRosbridge();
+        void SetStreamRawLongThrowSensorDataToRosbridge(Boolean streamRawSensorDataToRosbridge);
+        Boolean IsStreamSpatialCamerasFrontSensorDataToRosbridge();
+        void SetStreamSpatialCamerasFrontSensorDataToRosbridge(Boolean streamRawSensorDataToRosbridge);
+
         void SetRosbridgeServerUri(String rosbridgeUri);
-        Boolean IsConnectedToRosbridge();
+        Boolean IsLongThrowConnectedToRosbridge();
+        Boolean IsSpatialCamerasFrontConnectedToRosbridge();
     }
 }

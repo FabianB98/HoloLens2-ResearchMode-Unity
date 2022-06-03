@@ -20,9 +20,10 @@ public class ResearchModeVideoStream : MonoBehaviour
         LongThrow,
         None
     };
-    [SerializeField] DepthSensorMode depthSensorMode = DepthSensorMode.ShortThrow;
+    [SerializeField] DepthSensorMode depthSensorMode = DepthSensorMode.LongThrow;
     [SerializeField] bool enablePointCloud = true;
-    [SerializeField] bool streamRawSensorDataToRosbridge = true;
+    [SerializeField] bool streamRawLongThrowDepthDataToRosbridge = false;
+    [SerializeField] bool streamRawSpatialCamerasDataToRosbridge = false;
     [SerializeField] string rosbridgeUri = "";
 
     TCPClient tcpClient;
@@ -57,7 +58,11 @@ public class ResearchModeVideoStream : MonoBehaviour
     private Texture2D RFMediaTexture = null;
     private byte[] RFFrameData = null;
 
-    public UnityEngine.UI.Text text;
+    public UnityEngine.UI.Text pointCloudInfoText;
+    public UnityEngine.UI.Text sensorStreamInfoText;
+
+    public Renderer depthStreamStatusLED;
+    public Renderer stereoCamStreamStatusLED;
 
     public GameObject pointCloudRendererGo;
     public Color pointColor = Color.white;
@@ -78,6 +83,9 @@ public class ResearchModeVideoStream : MonoBehaviour
         unityWorldOrigin = Marshal.GetObjectForIUnknown(WorldOriginPtr) as Windows.Perception.Spatial.SpatialCoordinateSystem;
 #endif
 #endif
+
+        depthStreamStatusLED.material.color = Color.red;
+        stereoCamStreamStatusLED.material.color = Color.red;
     }
     void Start()
     {
@@ -155,10 +163,10 @@ public class ResearchModeVideoStream : MonoBehaviour
         researchMode.SetRosbridgeServerUri(rosbridgeUri);
 
         // Depth sensor should be initialized in only one mode
-        if (depthSensorMode == DepthSensorMode.LongThrow) researchMode.StartLongDepthSensorLoop(enablePointCloud, streamRawSensorDataToRosbridge);
+        if (depthSensorMode == DepthSensorMode.LongThrow) researchMode.StartLongDepthSensorLoop(enablePointCloud, streamRawLongThrowDepthDataToRosbridge);
         else if (depthSensorMode == DepthSensorMode.ShortThrow) researchMode.StartDepthSensorLoop(enablePointCloud);
 
-        researchMode.StartSpatialCamerasFrontLoop();
+        researchMode.StartSpatialCamerasFrontLoop(streamRawSpatialCamerasDataToRosbridge);
 #endif
     }
 
@@ -293,6 +301,8 @@ public class ResearchModeVideoStream : MonoBehaviour
 
         // Update point cloud
         UpdatePointCloud();
+
+        UpdateSensorStreamInfoText();
 #endif
     }
 
@@ -316,10 +326,18 @@ public class ResearchModeVideoStream : MonoBehaviour
                 {
                     pointCloudVector3[i] = new Vector3(pointCloud[3 * i], pointCloud[3 * i + 1], pointCloud[3 * i + 2]);
                 }
-                text.text = "Point Cloud Length: " + pointCloudVector3.Length.ToString() + "\nConnected to Rosbridge: " + researchMode.IsConnectedToRosbridge();
+                pointCloudInfoText.text = "Point Cloud Length: " + pointCloudVector3.Length.ToString();
                 pointCloudRenderer.Render(pointCloudVector3, pointColor);
             }
         }
+    }
+
+
+    private void UpdateSensorStreamInfoText()
+    {
+        sensorStreamInfoText.text = "Rosbridge URI: " + rosbridgeUri + "\n"
+                + "Depth stream connected: " + researchMode.IsLongThrowConnectedToRosbridge() + "\n"
+                + "Stereo image stream connected: " + researchMode.IsSpatialCamerasFrontConnectedToRosbridge();
     }
 #endif
 
@@ -330,7 +348,7 @@ public class ResearchModeVideoStream : MonoBehaviour
         startRealtimePreview = !startRealtimePreview;
     }
 
-    bool renderPointCloud = true;
+    bool renderPointCloud = false;
     public void TogglePointCloudEvent()
     {
         renderPointCloud = !renderPointCloud;
@@ -379,7 +397,7 @@ public class ResearchModeVideoStream : MonoBehaviour
         long ts_unix_right = ts_right.TargetTime.ToUnixTimeMilliseconds();
         long ts_unix_current = GetCurrentTimestampUnix();
 
-        text.text = "Left: " + ts_unix_left.ToString() + "\n" +
+        pointCloudInfoText.text = "Left: " + ts_unix_left.ToString() + "\n" +
             "Right: " + ts_unix_right.ToString() + "\n" +
             "Current: " + ts_unix_current.ToString();
 
@@ -387,6 +405,63 @@ public class ResearchModeVideoStream : MonoBehaviour
         {
             tcpClient.SendSpatialImageAsync(LRFImage, ts_unix_left, ts_unix_right);
         }
+#endif
+#endif
+    }
+
+    public void ToggleStreamDepthDataEvent()
+    {
+#if ENABLE_WINMD_SUPPORT
+#if WINDOWS_UWP
+        bool streamRawSensorData = !researchMode.IsStreamRawLongThrowSensorDataToRosbridge();
+        researchMode.SetStreamRawLongThrowSensorDataToRosbridge(streamRawSensorData);
+
+        if (streamRawSensorData)
+        {
+            depthStreamStatusLED.material.color = Color.green;
+        }
+        else
+        {
+            depthStreamStatusLED.material.color = Color.red;
+        }
+
+        UpdateSensorStreamInfoText();
+#endif
+#endif
+    }
+
+    public void ToggleStreamSpatialCamerasDataEvent()
+    {
+#if ENABLE_WINMD_SUPPORT
+#if WINDOWS_UWP
+        bool streamRawSensorData = !researchMode.IsStreamSpatialCamerasFrontSensorDataToRosbridge();
+        researchMode.SetStreamSpatialCamerasFrontSensorDataToRosbridge(streamRawSensorData);
+
+        if (streamRawSensorData)
+        {
+            stereoCamStreamStatusLED.material.color = Color.green;
+        }
+        else
+        {
+            stereoCamStreamStatusLED.material.color = Color.red;
+        }
+
+        UpdateSensorStreamInfoText();
+#endif
+#endif
+    }
+
+    public void StopAllStreamsEvent()
+    {
+#if ENABLE_WINMD_SUPPORT
+#if WINDOWS_UWP
+        researchMode.SetStreamRawLongThrowSensorDataToRosbridge(false);
+        researchMode.SetStreamSpatialCamerasFrontSensorDataToRosbridge(false);
+
+        depthStreamStatusLED.material.color = Color.red;
+        stereoCamStreamStatusLED.material.color = Color.red;
+
+        UpdateSensorStreamInfoText();
 #endif
 #endif
     }

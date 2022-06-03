@@ -4,12 +4,16 @@
 
 #define SHORT_THROW_PIXEL_DIRECTIONS_TOPIC L"/hololensShortThrowPixelDirections"
 #define LONG_THROW_PIXEL_DIRECTIONS_TOPIC L"/hololensLongThrowPixelDirections"
+#define STEREO_CAMERA_PIXEL_DIRECTIONS_TOPIC L"/hololensStereoCameraPixelDirections"
 
 #define SHORT_THROW_DEPTH_TOPIC L"/hololensShortThrowDepth"
 #define LONG_THROW_DEPTH_TOPIC L"/hololensLongThrowDepth"
+#define STEREO_IMAGE_TOPIC L"/hololensStereoImage"
 
 #define PIXEL_DIRECTIONS_MESSAGE_TYPE L"hololens_msgs/PixelDirections"
+#define STEREO_PIXEL_DIRECTIONS_MESSAGE_TYPE L"hololens_msgs/StereoPixelDirections"
 #define DEPTH_FRAME_MESSAGE_TYPE L"hololens_msgs/DepthFrame"
+#define STEREO_CAMERA_FRAME_MESSAGE_TYPE L"hololens_msgs/StereoCameraFrame"
 
 extern "C"
 HMODULE LoadLibraryA(
@@ -822,12 +826,14 @@ namespace winrt::HL2UnityPlugin::implementation
         }
     }
 
-    void HL2ResearchMode::StartSpatialCamerasFrontLoop()
+    void HL2ResearchMode::StartSpatialCamerasFrontLoop(bool streamRawSensorDataToRosbridge)
     {
         if (m_refFrame == nullptr)
         {
             m_refFrame = m_locator.GetDefault().CreateStationaryFrameOfReferenceAtCurrentLocation().CoordinateSystem();
         }
+
+        m_streamSpatialCamerasFrontSensorDataToRosbridge = streamRawSensorDataToRosbridge;
 
         m_pSpatialCamerasFrontUpdateThread = new std::thread(HL2ResearchMode::SpatialCamerasFrontLoop, this);
     }
@@ -845,6 +851,12 @@ namespace winrt::HL2UnityPlugin::implementation
 
         pHL2ResearchMode->m_LFSensor->OpenStream();
         pHL2ResearchMode->m_RFSensor->OpenStream();
+
+        pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+        Windows::Networking::Sockets::MessageWebSocket websocket;
+        Windows::Storage::Streams::DataWriter dataWriter;
+        bool websocketAndDataWriterInitialized = false;
+        int failedFrames = 0;
 
         try
         {
@@ -886,7 +898,7 @@ namespace winrt::HL2UnityPlugin::implementation
                 auto ts_right = PerceptionTimestampHelper::FromSystemRelativeTargetTime(HundredsOfNanoseconds(checkAndConvertUnsigned(timestamp_right.HostTicks)));
                 
                 // uncomment the block below if their transform is needed
-                /*auto rigToWorld_l = pHL2ResearchMode->m_locator.TryLocateAtTimestamp(ts_left, pHL2ResearchMode->m_refFrame);
+                auto rigToWorld_l = pHL2ResearchMode->m_locator.TryLocateAtTimestamp(ts_left, pHL2ResearchMode->m_refFrame);
                 auto rigToWorld_r = rigToWorld_l;
                 if (ts_left.TargetTime() != ts_right.TargetTime()) {
                     rigToWorld_r = pHL2ResearchMode->m_locator.TryLocateAtTimestamp(ts_right, pHL2ResearchMode->m_refFrame);
@@ -898,7 +910,253 @@ namespace winrt::HL2UnityPlugin::implementation
                 }
                 
                 auto LfToWorld = pHL2ResearchMode->m_LFCameraPoseInvMatrix * SpatialLocationToDxMatrix(rigToWorld_l);
-				auto RfToWorld = pHL2ResearchMode->m_RFCameraPoseInvMatrix * SpatialLocationToDxMatrix(rigToWorld_r);*/
+				auto RfToWorld = pHL2ResearchMode->m_RFCameraPoseInvMatrix * SpatialLocationToDxMatrix(rigToWorld_r);
+
+                // stream data to Rosbridge
+                if (pHL2ResearchMode->m_streamSpatialCamerasFrontSensorDataToRosbridge)
+                {
+                    if (!pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge)
+                    {
+                        if (websocketAndDataWriterInitialized)
+                        {
+                            try
+                            {
+                                dataWriter.DetachStream();
+                                websocket.Close();
+                                websocketAndDataWriterInitialized = false;
+                            }
+                            catch (...)
+                            {
+                                OutputDebugString(L"Oh no, something went wrong when closing the old websocket connection!");
+                            }
+                        }
+
+                        try
+                        {
+                            Windows::Foundation::Uri uri = Windows::Foundation::Uri(pHL2ResearchMode->m_rosbridgeUri);
+                            websocket = Windows::Networking::Sockets::MessageWebSocket();
+                            websocket.Control().MessageType(Windows::Networking::Sockets::SocketMessageType::Utf8);
+
+                            websocket.ConnectAsync(uri).get();
+                            dataWriter = Windows::Storage::Streams::DataWriter(websocket.OutputStream());
+                            websocketAndDataWriterInitialized = true;
+
+                            dataWriter.WriteString(L"{\"op\":\"advertise\",\"topic\":\"");
+                            dataWriter.WriteString(STEREO_CAMERA_PIXEL_DIRECTIONS_TOPIC);
+                            dataWriter.WriteString(L"\",\"type\":\"");
+                            dataWriter.WriteString(STEREO_PIXEL_DIRECTIONS_MESSAGE_TYPE);
+                            dataWriter.WriteString(L"\"}");
+                            dataWriter.StoreAsync().get();
+
+                            dataWriter.WriteString(L"{\"op\":\"advertise\",\"topic\":\"");
+                            dataWriter.WriteString(STEREO_IMAGE_TOPIC);
+                            dataWriter.WriteString(L"\",\"type\":\"");
+                            dataWriter.WriteString(STEREO_CAMERA_FRAME_MESSAGE_TYPE);
+                            dataWriter.WriteString(L"\"}");
+                            dataWriter.StoreAsync().get();
+
+                            OutputDebugString(L"Established connection to a Rosbridge websocket!\n");
+                            pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = true;
+                            pHL2ResearchMode->m_spatialCamerasFrontPixelDirectionsSent = false;
+                            failedFrames = 0;
+                        }
+                        catch (...)
+                        {
+                            OutputDebugString(L"Connection to a Rosbridge websocket couldn't be established!\n");
+                        }
+                    }
+
+                    if (pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge)
+                    {
+                        if (!pHL2ResearchMode->m_spatialCamerasFrontPixelDirectionsSent)
+                        {
+                            std::vector<PixelDirection> pixelDirectionsLeft;
+                            std::vector<PixelDirection> pixelDirectionsRight;
+
+                            // Iterate over all pixels of the left camera image.
+                            for (UINT v = 0; v < LFResolution.Height; v++)
+                            {
+                                for (UINT u = 0; u < LFResolution.Width; u++)
+                                {
+                                    // Calculate the direction (in camera view space) in which the current pixel points at.
+                                    float xy[2] = { 0, 0 };
+                                    float uv[2] = { static_cast<float>(u), static_cast<float>(v) };
+                                    pHL2ResearchMode->m_LFCameraSensor->MapImagePointToCameraUnitPlane(uv, xy);
+                                    Windows::Foundation::Numerics::float3 direction = Windows::Foundation::Numerics::float3(xy[0], xy[1], 1.0);
+                                    direction = Windows::Foundation::Numerics::normalize(direction);
+
+                                    // Add the direction to the resulting pixel directions.
+                                    pixelDirectionsLeft.push_back(PixelDirection(u, v, direction));
+                                }
+                            }
+
+                            // Iterate over all pixels of the right camera image.
+                            for (UINT v = 0; v < RFResolution.Height; v++)
+                            {
+                                for (UINT u = 0; u < RFResolution.Width; u++)
+                                {
+                                    // Calculate the direction (in camera view space) in which the current pixel points at.
+                                    float xy[2] = { 0, 0 };
+                                    float uv[2] = { static_cast<float>(u), static_cast<float>(v) };
+                                    pHL2ResearchMode->m_RFCameraSensor->MapImagePointToCameraUnitPlane(uv, xy);
+                                    Windows::Foundation::Numerics::float3 direction = Windows::Foundation::Numerics::float3(xy[0], xy[1], 1.0);
+                                    direction = Windows::Foundation::Numerics::normalize(direction);
+
+                                    // Add the direction to the resulting pixel directions.
+                                    pixelDirectionsRight.push_back(PixelDirection(u, v, direction));
+                                }
+                            }
+
+                            OutputDebugStringFormat("Got %zu (left camera) and %zu (right camera) pixel directions!\n", pixelDirectionsLeft.size(), pixelDirectionsRight.size());
+
+                            // Send the pixel directions to ROS.
+                            try
+                            {
+                                dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
+                                dataWriter.WriteString(STEREO_CAMERA_PIXEL_DIRECTIONS_TOPIC);
+                                dataWriter.WriteString(L"\",\"msg\":{\"pixelDirectionsLeft\":[");
+                                for (size_t i = 0; i < pixelDirectionsLeft.size(); i++)
+                                {
+                                    dataWriter.WriteString(L"{\"u\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsLeft[i].u));
+                                    dataWriter.WriteString(L",\"v\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsLeft[i].v));
+                                    dataWriter.WriteString(L",\"direction\":{\"x\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsLeft[i].direction.x));
+                                    dataWriter.WriteString(L",\"y\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsLeft[i].direction.y));
+                                    dataWriter.WriteString(L",\"z\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsLeft[i].direction.z));
+                                    dataWriter.WriteString(L"}}");
+                                    if (i < pixelDirectionsLeft.size() - 1)
+                                    {
+                                        dataWriter.WriteString(L",");
+                                    }
+                                }
+                                dataWriter.WriteString(L"],\"pixelDirectionsRight\":[");
+                                for (size_t i = 0; i < pixelDirectionsRight.size(); i++)
+                                {
+                                    dataWriter.WriteString(L"{\"u\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsRight[i].u));
+                                    dataWriter.WriteString(L",\"v\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsRight[i].v));
+                                    dataWriter.WriteString(L",\"direction\":{\"x\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsRight[i].direction.x));
+                                    dataWriter.WriteString(L",\"y\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsRight[i].direction.y));
+                                    dataWriter.WriteString(L",\"z\":");
+                                    dataWriter.WriteString(to_hstring(pixelDirectionsRight[i].direction.z));
+                                    dataWriter.WriteString(L"}}");
+                                    if (i < pixelDirectionsRight.size() - 1)
+                                    {
+                                        dataWriter.WriteString(L",");
+                                    }
+                                }
+                                dataWriter.WriteString(L"]}}");
+                                dataWriter.StoreAsync().get();
+
+                                pHL2ResearchMode->m_spatialCamerasFrontPixelDirectionsSent = true;
+                                failedFrames = 0;
+                            }
+                            catch (...)
+                            {
+                                OutputDebugString(L"Pixel directions couldn't be sent to the Rosbridge websocket!\n");
+                                failedFrames++;
+                                if (failedFrames >= 5)
+                                {
+                                    OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
+                                    pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+                                }
+                            }
+                        }
+
+                        // Encode the two camera images in Base64.
+                        UINT8* leftImageBytes = (UINT8*)pLFImage;
+                        UINT32 leftPixelStride = 1;     // Camera images captured by the HoloLens 2 have 8 bit (= 1 byte) per pixel of visible light information.
+                        int32_t imageBufferSize = LFResolution.Width * LFResolution.Height * leftPixelStride;
+                        std::string leftImageEncoded = base64_encode(leftImageBytes, imageBufferSize);
+
+                        UINT8* rightImageBytes = (UINT8*)pRFImage;
+                        UINT32 rightPixelStride = 1;     // Camera images captured by the HoloLens 2 have 8 bit (= 1 byte) per pixel of visible light information.
+                        imageBufferSize = RFResolution.Width * RFResolution.Height * rightPixelStride;
+                        std::string rightImageEncoded = base64_encode(rightImageBytes, imageBufferSize);
+
+                        // Get the translation vector and the rotation quaternion from the transformation matrix.
+                        XMVECTOR scaleVectorLeft;           // This should always be equal to a scale of 1.0 so we don't have to transmit it to ROS.
+                        XMVECTOR rotationQuaternionLeft;
+                        XMVECTOR translationVectorLeft;
+                        XMMatrixDecompose(&scaleVectorLeft, &rotationQuaternionLeft, &translationVectorLeft, LfToWorld);
+
+                        XMVECTOR scaleVectorRight;           // This should always be equal to a scale of 1.0 so we don't have to transmit it to ROS.
+                        XMVECTOR rotationQuaternionRight;
+                        XMVECTOR translationVectorRight;
+                        XMMatrixDecompose(&scaleVectorRight, &rotationQuaternionRight, &translationVectorRight, RfToWorld);
+
+                        // Send everything (i.e. encoded images, width, height, pixel stride, translation and rotation) to ROS.
+                        try
+                        {
+                            dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
+                            dataWriter.WriteString(STEREO_IMAGE_TOPIC);
+                            dataWriter.WriteString(L"\",\"msg\":{\"imageWidthLeft\":");
+                            dataWriter.WriteString(to_hstring(LFResolution.Width));
+                            dataWriter.WriteString(L",\"imageWidthRight\":");
+                            dataWriter.WriteString(to_hstring(RFResolution.Width));
+                            dataWriter.WriteString(L",\"imageHeightLeft\":");
+                            dataWriter.WriteString(to_hstring(LFResolution.Height));
+                            dataWriter.WriteString(L",\"imageHeightRight\":");
+                            dataWriter.WriteString(to_hstring(RFResolution.Height));
+                            dataWriter.WriteString(L",\"pixelStrideLeft\":");
+                            dataWriter.WriteString(to_hstring(leftPixelStride));
+                            dataWriter.WriteString(L",\"pixelStrideRight\":");
+                            dataWriter.WriteString(to_hstring(rightPixelStride));
+                            dataWriter.WriteString(L",\"base64encodedImageLeft\":\"");
+                            dataWriter.WriteString(to_hstring(leftImageEncoded.c_str()));
+                            dataWriter.WriteString(L"\",\"base64encodedImageRight\":\"");
+                            dataWriter.WriteString(to_hstring(rightImageEncoded.c_str()));
+                            dataWriter.WriteString(L"\",\"camToWorldTranslationLeft\":{\"x\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorLeft)));
+                            dataWriter.WriteString(L",\"y\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorLeft)));
+                            dataWriter.WriteString(L",\"z\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorLeft)));
+                            dataWriter.WriteString(L"},\"camToWorldTranslationRight\":{\"x\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorRight)));
+                            dataWriter.WriteString(L",\"y\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorRight)));
+                            dataWriter.WriteString(L",\"z\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorRight)));
+                            dataWriter.WriteString(L"},\"camToWorldRotationLeft\":{\"w\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionLeft)));
+                            dataWriter.WriteString(L",\"x\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionLeft)));
+                            dataWriter.WriteString(L",\"y\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionLeft)));
+                            dataWriter.WriteString(L",\"z\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionLeft)));
+                            dataWriter.WriteString(L"},\"camToWorldRotationRight\":{\"w\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionRight)));
+                            dataWriter.WriteString(L",\"x\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionRight)));
+                            dataWriter.WriteString(L",\"y\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionRight)));
+                            dataWriter.WriteString(L",\"z\":");
+                            dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionRight)));
+                            dataWriter.WriteString(L"}}}");
+                            dataWriter.StoreAsync().get();  // Waiting for the data to be finished sending is definitely not performant. This needs to be changed in the future.
+
+                            failedFrames = 0;
+                        }
+                        catch (...)
+                        {
+                            OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n"); failedFrames++;
+                            if (failedFrames >= 5)
+                            {
+                                OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
+                                pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+                            }
+                        }
+                    }
+                }
 
                 // save data
                 {
@@ -945,6 +1203,20 @@ namespace winrt::HL2UnityPlugin::implementation
 		pHL2ResearchMode->m_RFSensor->CloseStream();
 		pHL2ResearchMode->m_RFSensor->Release();
 		pHL2ResearchMode->m_RFSensor = nullptr;
+
+        if (websocketAndDataWriterInitialized)
+        {
+            try
+            {
+                dataWriter.DetachStream();
+                websocket.Close();
+                websocketAndDataWriterInitialized = false;
+            }
+            catch (...)
+            {
+                OutputDebugString(L"Oh no, something went wrong when closing the websocket connection!");
+            }
+        }
     }
 
     void HL2ResearchMode::StartAccelSensorLoop()

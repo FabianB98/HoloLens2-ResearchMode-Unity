@@ -48,7 +48,7 @@ namespace winrt::HL2UnityPlugin::implementation
 
         void StartDepthSensorLoop(bool reconstructPointCloud = true);
         void StartLongDepthSensorLoop(bool reconstructPointCloud = true, bool streamRawSensorDataToRosbridge = true);
-        void StartSpatialCamerasFrontLoop();
+        void StartSpatialCamerasFrontLoop(bool streamRawSensorDataToRosbridge = true);
         void StartAccelSensorLoop();
         void StartGyroSensorLoop();
         void StartMagSensorLoop();
@@ -92,14 +92,39 @@ namespace winrt::HL2UnityPlugin::implementation
         com_array<float> GetCenterPoint();
         std::mutex mu;
 
+        bool IsStreamRawLongThrowSensorDataToRosbridge()
+        {
+            return m_streamRawLongThrowSensorDataToRosbridge;
+        }
+
+        void SetStreamRawLongThrowSensorDataToRosbridge(bool streamRawSensorDataToRosbridge)
+        {
+            m_streamRawLongThrowSensorDataToRosbridge = streamRawSensorDataToRosbridge;
+        }
+
+        bool IsStreamSpatialCamerasFrontSensorDataToRosbridge()
+        {
+            return m_streamSpatialCamerasFrontSensorDataToRosbridge;
+        }
+
+        void SetStreamSpatialCamerasFrontSensorDataToRosbridge(bool streamRawSensorDataToRosbridge)
+        {
+            m_streamSpatialCamerasFrontSensorDataToRosbridge = streamRawSensorDataToRosbridge;
+        }
+
         void SetRosbridgeServerUri(const winrt::hstring rosbridgeUri)
         {
             m_rosbridgeUri = rosbridgeUri;
         }
 
-        bool IsConnectedToRosbridge()
+        bool IsLongThrowConnectedToRosbridge()
         {
             return m_longThrowConnectedToRosbridge;
+        }
+
+        bool IsSpatialCamerasFrontConnectedToRosbridge()
+        {
+            return m_spatialCamerasFrontConnectedToRosbridge;
         }
 
     private:
@@ -174,9 +199,13 @@ namespace winrt::HL2UnityPlugin::implementation
 
         winrt::hstring m_rosbridgeUri = L"";
         std::atomic_bool m_longThrowConnectedToRosbridge = false;
+        std::atomic_bool m_spatialCamerasFrontConnectedToRosbridge = false;
 
         std::atomic_bool m_streamRawLongThrowSensorDataToRosbridge = false;
         std::atomic_bool m_longThrowPixelDirectionsSent = false;
+
+        std::atomic_bool m_streamSpatialCamerasFrontSensorDataToRosbridge = false;
+        std::atomic_bool m_spatialCamerasFrontPixelDirectionsSent = false;
 
         float m_roiBound[3]{ 0,0,0 };
         float m_roiCenter[3]{ 0,0,0 };
