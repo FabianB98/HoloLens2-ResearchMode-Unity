@@ -75,8 +75,10 @@ namespace HL2UnityPlugin
 
         Boolean IsStreamRawLongThrowSensorDataToRosbridge();
         void SetStreamRawLongThrowSensorDataToRosbridge(Boolean streamRawSensorDataToRosbridge);
+        void SetStreamLongThrowPixelDirectionsToRosbridge(Boolean streamPixelDirectionsToRosbridge);
         Boolean IsStreamSpatialCamerasFrontSensorDataToRosbridge();
         void SetStreamSpatialCamerasFrontSensorDataToRosbridge(Boolean streamRawSensorDataToRosbridge);
+        void SetStreamSpatialCamerasFrontPixelDirectionsToRosbridge(Boolean streamPixelDirectionsToRosbridge);
 
         void SetRosbridgeServerUri(String rosbridgeUri);
         Boolean IsLongThrowConnectedToRosbridge();

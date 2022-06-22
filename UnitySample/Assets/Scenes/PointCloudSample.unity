@@ -1867,7 +1867,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   depthSensorMode: 1
   enablePointCloud: 1
+  streamLongThrowPixelDirectionsToRosbridge: 1
   streamRawLongThrowDepthDataToRosbridge: 0
+  streamSpatialCamerasPixelDirectionsToRosbridge: 0
   streamRawSpatialCamerasDataToRosbridge: 0
   rosbridgeUri: ws://141.3.81.144:9090
   depthPreviewPlane: {fileID: 456786859}

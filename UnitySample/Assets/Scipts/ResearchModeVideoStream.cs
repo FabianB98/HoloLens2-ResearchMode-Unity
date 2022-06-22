@@ -22,7 +22,9 @@ public class ResearchModeVideoStream : MonoBehaviour
     };
     [SerializeField] DepthSensorMode depthSensorMode = DepthSensorMode.LongThrow;
     [SerializeField] bool enablePointCloud = true;
+    [SerializeField] bool streamLongThrowPixelDirectionsToRosbridge = true;
     [SerializeField] bool streamRawLongThrowDepthDataToRosbridge = false;
+    [SerializeField] bool streamSpatialCamerasPixelDirectionsToRosbridge = true;
     [SerializeField] bool streamRawSpatialCamerasDataToRosbridge = false;
     [SerializeField] string rosbridgeUri = "";
 
@@ -161,6 +163,8 @@ public class ResearchModeVideoStream : MonoBehaviour
         researchMode.SetPointCloudDepthOffset(0);
 
         researchMode.SetRosbridgeServerUri(rosbridgeUri);
+        researchMode.SetStreamLongThrowPixelDirectionsToRosbridge(streamLongThrowPixelDirectionsToRosbridge);
+        researchMode.SetStreamSpatialCamerasFrontPixelDirectionsToRosbridge(streamSpatialCamerasPixelDirectionsToRosbridge);
 
         // Depth sensor should be initialized in only one mode
         if (depthSensorMode == DepthSensorMode.LongThrow) researchMode.StartLongDepthSensorLoop(enablePointCloud, streamRawLongThrowDepthDataToRosbridge);

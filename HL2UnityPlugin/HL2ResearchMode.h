@@ -102,6 +102,11 @@ namespace winrt::HL2UnityPlugin::implementation
             m_streamRawLongThrowSensorDataToRosbridge = streamRawSensorDataToRosbridge;
         }
 
+        void SetStreamLongThrowPixelDirectionsToRosbridge(bool streamPixelDirectionsToRosbridge)
+        {
+            m_streamLongThrowPixelDirectionsToRosbridge = streamPixelDirectionsToRosbridge;
+        }
+
         bool IsStreamSpatialCamerasFrontSensorDataToRosbridge()
         {
             return m_streamSpatialCamerasFrontSensorDataToRosbridge;
@@ -110,6 +115,11 @@ namespace winrt::HL2UnityPlugin::implementation
         void SetStreamSpatialCamerasFrontSensorDataToRosbridge(bool streamRawSensorDataToRosbridge)
         {
             m_streamSpatialCamerasFrontSensorDataToRosbridge = streamRawSensorDataToRosbridge;
+        }
+
+        void SetStreamSpatialCamerasFrontPixelDirectionsToRosbridge(bool streamPixelDirectionsToRosbridge)
+        {
+            m_streamSpatialCamerasFrontPixelDirectionsToRosbridge = streamPixelDirectionsToRosbridge;
         }
 
         void SetRosbridgeServerUri(const winrt::hstring rosbridgeUri)
@@ -202,9 +212,11 @@ namespace winrt::HL2UnityPlugin::implementation
         std::atomic_bool m_spatialCamerasFrontConnectedToRosbridge = false;
 
         std::atomic_bool m_streamRawLongThrowSensorDataToRosbridge = false;
+        std::atomic_bool m_streamLongThrowPixelDirectionsToRosbridge = true;
         std::atomic_bool m_longThrowPixelDirectionsSent = false;
 
         std::atomic_bool m_streamSpatialCamerasFrontSensorDataToRosbridge = false;
+        std::atomic_bool m_streamSpatialCamerasFrontPixelDirectionsToRosbridge = true;
         std::atomic_bool m_spatialCamerasFrontPixelDirectionsSent = false;
 
         float m_roiBound[3]{ 0,0,0 };

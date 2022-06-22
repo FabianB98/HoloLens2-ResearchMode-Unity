@@ -609,7 +609,7 @@ namespace winrt::HL2UnityPlugin::implementation
 
                     if (pHL2ResearchMode->m_longThrowConnectedToRosbridge)
                     {
-                        if (!pHL2ResearchMode->m_longThrowPixelDirectionsSent)
+                        if (pHL2ResearchMode->m_streamLongThrowPixelDirectionsToRosbridge && !pHL2ResearchMode->m_longThrowPixelDirectionsSent)
                         {
                             std::vector<PixelDirection> pixelDirections;
 
@@ -730,7 +730,8 @@ namespace winrt::HL2UnityPlugin::implementation
                         }
                         catch (...)
                         {
-                            OutputDebugString(L"Depth image couldn't be sent to the Rosbridge websocket!\n"); failedFrames++;
+                            OutputDebugString(L"Depth image couldn't be sent to the Rosbridge websocket!\n");
+                            failedFrames++;
                             if (failedFrames >= 5)
                             {
                                 OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
@@ -968,7 +969,7 @@ namespace winrt::HL2UnityPlugin::implementation
 
                     if (pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge)
                     {
-                        if (!pHL2ResearchMode->m_spatialCamerasFrontPixelDirectionsSent)
+                        if (pHL2ResearchMode->m_streamSpatialCamerasFrontPixelDirectionsToRosbridge && !pHL2ResearchMode->m_spatialCamerasFrontPixelDirectionsSent)
                         {
                             std::vector<PixelDirection> pixelDirectionsLeft;
                             std::vector<PixelDirection> pixelDirectionsRight;
@@ -1148,7 +1149,8 @@ namespace winrt::HL2UnityPlugin::implementation
                         }
                         catch (...)
                         {
-                            OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n"); failedFrames++;
+                            OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n");
+                            failedFrames++;
                             if (failedFrames >= 5)
                             {
                                 OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
