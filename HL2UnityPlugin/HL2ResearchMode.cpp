@@ -858,6 +858,7 @@ namespace winrt::HL2UnityPlugin::implementation
         Windows::Storage::Streams::DataWriter dataWriter;
         bool websocketAndDataWriterInitialized = false;
         int failedFrames = 0;
+        bool currentlySendingFrame = false;
 
         try
         {
@@ -869,6 +870,45 @@ namespace winrt::HL2UnityPlugin::implementation
                 ResearchModeSensorResolution RFResolution;
                 pHL2ResearchMode->m_LFSensor->GetNextBuffer(&pLFCameraFrame);
 				pHL2ResearchMode->m_RFSensor->GetNextBuffer(&pRFCameraFrame);
+
+                // get timestamps
+                ResearchModeSensorTimestamp timestamp_left, timestamp_right;
+                pLFCameraFrame->GetTimeStamp(&timestamp_left);
+                pRFCameraFrame->GetTimeStamp(&timestamp_right);
+
+                // Ensure that both images are in sync. Even though this should work in theory, it isn't much of help in practice... During testing, I noticed that there
+                // is usually a delay of one frame (i.e. ~33.3 milliseconds) between the two images, where sometimes the left image was one frame behind the right image or
+                // vice versa. In theory, it should be enough in this case to simply skip one frame of one side to compensate for this misalignment. However, when doing so,
+                // there is almost every time still a difference of one frame between the two images, just the other way around than before... This results in an alternating
+                // pattern where the left image is one frame behind the right image, then the right image is one frame behind the left image and so on. From time to time the
+                // timestamps of the images would finally match up. However, this happened only about two or three times every minute during my tests, which is definitely
+                // way too rarely for stereo vision in real time... Therefore, this block of code is commented out. I chose to left it here, so that anyone reading this may
+                // test this is able to reproduce what I just described.
+                //double timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
+                //while (abs(timeDifferenceMillis) > 20.0)
+                //{
+                //    if (timeDifferenceMillis > 0.0)
+                //    {
+                //        // Left image is more than 20 milliseconds newer than the right image. This means that the image streams are out of sync (VLC cameras capture
+                //        // 30 frames per second, i.e. one frame each ~33.3 milliseconds). To compensate for this issue, we skip one frame of the right image stream.
+                //        OutputDebugStringFormat("VLC image streams are %f ms out of sync! Skipping one frame of the right image stream...\n", timeDifferenceMillis);
+                //        pRFCameraFrame->Release();
+                //        pHL2ResearchMode->m_RFSensor->GetNextBuffer(&pRFCameraFrame);
+                //        pRFCameraFrame->GetTimeStamp(&timestamp_right);
+                //    }
+                //    else
+                //    {
+                //        // Right image is more than 20 milliseconds newer than the left image. This means that the image streams are out of sync (VLC cameras capture
+                //        // 30 frames per second, i.e. one frame each ~33.3 milliseconds). To compensate for this issue, we skip one frame of the left image stream.
+                //        OutputDebugStringFormat("VLC image streams are %f ms out of sync! Skipping one frame of the left image stream...\n", -timeDifferenceMillis);
+                //        pLFCameraFrame->Release();
+                //        pHL2ResearchMode->m_LFSensor->GetNextBuffer(&pLFCameraFrame);
+                //        pLFCameraFrame->GetTimeStamp(&timestamp_left);
+                //    }
+                //    
+                //    timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
+                //}
+                //OutputDebugStringFormat("VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
 
                 // process sensor frame
                 pLFCameraFrame->GetResolution(&LFResolution);
@@ -891,10 +931,6 @@ namespace winrt::HL2UnityPlugin::implementation
 				pHL2ResearchMode->m_RFbufferSize = RFOutBufferCount;
 
                 // get tracking transform
-                ResearchModeSensorTimestamp timestamp_left, timestamp_right;
-                pLFCameraFrame->GetTimeStamp(&timestamp_left);
-                pRFCameraFrame->GetTimeStamp(&timestamp_right);
-
                 auto ts_left = PerceptionTimestampHelper::FromSystemRelativeTargetTime(HundredsOfNanoseconds(checkAndConvertUnsigned(timestamp_left.HostTicks)));
                 auto ts_right = PerceptionTimestampHelper::FromSystemRelativeTargetTime(HundredsOfNanoseconds(checkAndConvertUnsigned(timestamp_right.HostTicks)));
                 
@@ -928,7 +964,7 @@ namespace winrt::HL2UnityPlugin::implementation
                             }
                             catch (...)
                             {
-                                OutputDebugString(L"Oh no, something went wrong when closing the old websocket connection!");
+                                OutputDebugString(L"Oh no, something went wrong when closing the old websocket connection!\n");
                             }
                         }
 
@@ -1094,67 +1130,103 @@ namespace winrt::HL2UnityPlugin::implementation
                         XMMatrixDecompose(&scaleVectorRight, &rotationQuaternionRight, &translationVectorRight, RfToWorld);
 
                         // Send everything (i.e. encoded images, width, height, pixel stride, translation and rotation) to ROS.
-                        try
+                        if (!currentlySendingFrame && pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge)
                         {
-                            dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
-                            dataWriter.WriteString(STEREO_IMAGE_TOPIC);
-                            dataWriter.WriteString(L"\",\"msg\":{\"imageWidthLeft\":");
-                            dataWriter.WriteString(to_hstring(LFResolution.Width));
-                            dataWriter.WriteString(L",\"imageWidthRight\":");
-                            dataWriter.WriteString(to_hstring(RFResolution.Width));
-                            dataWriter.WriteString(L",\"imageHeightLeft\":");
-                            dataWriter.WriteString(to_hstring(LFResolution.Height));
-                            dataWriter.WriteString(L",\"imageHeightRight\":");
-                            dataWriter.WriteString(to_hstring(RFResolution.Height));
-                            dataWriter.WriteString(L",\"pixelStrideLeft\":");
-                            dataWriter.WriteString(to_hstring(leftPixelStride));
-                            dataWriter.WriteString(L",\"pixelStrideRight\":");
-                            dataWriter.WriteString(to_hstring(rightPixelStride));
-                            dataWriter.WriteString(L",\"base64encodedImageLeft\":\"");
-                            dataWriter.WriteString(to_hstring(leftImageEncoded.c_str()));
-                            dataWriter.WriteString(L"\",\"base64encodedImageRight\":\"");
-                            dataWriter.WriteString(to_hstring(rightImageEncoded.c_str()));
-                            dataWriter.WriteString(L"\",\"camToWorldTranslationLeft\":{\"x\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorLeft)));
-                            dataWriter.WriteString(L",\"y\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorLeft)));
-                            dataWriter.WriteString(L",\"z\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorLeft)));
-                            dataWriter.WriteString(L"},\"camToWorldTranslationRight\":{\"x\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorRight)));
-                            dataWriter.WriteString(L",\"y\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorRight)));
-                            dataWriter.WriteString(L",\"z\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorRight)));
-                            dataWriter.WriteString(L"},\"camToWorldRotationLeft\":{\"w\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionLeft)));
-                            dataWriter.WriteString(L",\"x\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionLeft)));
-                            dataWriter.WriteString(L",\"y\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionLeft)));
-                            dataWriter.WriteString(L",\"z\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionLeft)));
-                            dataWriter.WriteString(L"},\"camToWorldRotationRight\":{\"w\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionRight)));
-                            dataWriter.WriteString(L",\"x\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionRight)));
-                            dataWriter.WriteString(L",\"y\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionRight)));
-                            dataWriter.WriteString(L",\"z\":");
-                            dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionRight)));
-                            dataWriter.WriteString(L"}}}");
-                            dataWriter.StoreAsync().get();  // Waiting for the data to be finished sending is definitely not performant. This needs to be changed in the future.
+                            currentlySendingFrame = true;
 
-                            failedFrames = 0;
-                        }
-                        catch (...)
-                        {
-                            OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n");
-                            failedFrames++;
-                            if (failedFrames >= 5)
+                            try
                             {
-                                OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
-                                pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+                                dataWriter.WriteString(L"{\"op\":\"publish\",\"topic\":\"");
+                                dataWriter.WriteString(STEREO_IMAGE_TOPIC);
+                                dataWriter.WriteString(L"\",\"msg\":{\"imageWidthLeft\":");
+                                dataWriter.WriteString(to_hstring(LFResolution.Width));
+                                dataWriter.WriteString(L",\"imageWidthRight\":");
+                                dataWriter.WriteString(to_hstring(RFResolution.Width));
+                                dataWriter.WriteString(L",\"imageHeightLeft\":");
+                                dataWriter.WriteString(to_hstring(LFResolution.Height));
+                                dataWriter.WriteString(L",\"imageHeightRight\":");
+                                dataWriter.WriteString(to_hstring(RFResolution.Height));
+                                dataWriter.WriteString(L",\"pixelStrideLeft\":");
+                                dataWriter.WriteString(to_hstring(leftPixelStride));
+                                dataWriter.WriteString(L",\"pixelStrideRight\":");
+                                dataWriter.WriteString(to_hstring(rightPixelStride));
+                                dataWriter.WriteString(L",\"base64encodedImageLeft\":\"");
+                                dataWriter.WriteString(to_hstring(leftImageEncoded.c_str()));
+                                dataWriter.WriteString(L"\",\"base64encodedImageRight\":\"");
+                                dataWriter.WriteString(to_hstring(rightImageEncoded.c_str()));
+                                dataWriter.WriteString(L"\",\"camToWorldTranslationLeft\":{\"x\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorLeft)));
+                                dataWriter.WriteString(L",\"y\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorLeft)));
+                                dataWriter.WriteString(L",\"z\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorLeft)));
+                                dataWriter.WriteString(L"},\"camToWorldTranslationRight\":{\"x\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetX(translationVectorRight)));
+                                dataWriter.WriteString(L",\"y\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetY(translationVectorRight)));
+                                dataWriter.WriteString(L",\"z\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetZ(translationVectorRight)));
+                                dataWriter.WriteString(L"},\"camToWorldRotationLeft\":{\"w\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionLeft)));
+                                dataWriter.WriteString(L",\"x\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionLeft)));
+                                dataWriter.WriteString(L",\"y\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionLeft)));
+                                dataWriter.WriteString(L",\"z\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionLeft)));
+                                dataWriter.WriteString(L"},\"camToWorldRotationRight\":{\"w\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetW(rotationQuaternionRight)));
+                                dataWriter.WriteString(L",\"x\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetX(rotationQuaternionRight)));
+                                dataWriter.WriteString(L",\"y\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetY(rotationQuaternionRight)));
+                                dataWriter.WriteString(L",\"z\":");
+                                dataWriter.WriteString(to_hstring(XMVectorGetZ(rotationQuaternionRight)));
+                                dataWriter.WriteString(L"},\"timeLeft\":");
+                                dataWriter.WriteString(to_hstring(timestamp_left.HostTicks));
+                                dataWriter.WriteString(L",\"timeRight\":");
+                                dataWriter.WriteString(to_hstring(timestamp_right.HostTicks));
+                                dataWriter.WriteString(L"}}");
+
+                                auto storeOperation = dataWriter.StoreAsync();
+                                storeOperation.Completed(
+                                    [&pHL2ResearchMode, &failedFrames, &currentlySendingFrame]
+                                    (const Windows::Foundation::IAsyncOperation<uint32_t>& operation, const Windows::Foundation::AsyncStatus asyncStatus)
+                                    {
+                                        if (asyncStatus != Windows::Foundation::AsyncStatus::Started)
+                                        {
+                                            if (asyncStatus == Windows::Foundation::AsyncStatus::Completed)
+                                            {
+                                                failedFrames = 0;
+                                            }
+                                            else if (asyncStatus == Windows::Foundation::AsyncStatus::Error)
+                                            {
+                                                OutputDebugString(L"Store operation failed with an error state!\n");
+                                                OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n");
+                                                failedFrames++;
+                                                if (failedFrames >= 5)
+                                                {
+                                                    OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
+                                                    pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+                                                }
+                                            }
+
+                                            currentlySendingFrame = false;
+                                        }
+                                    }
+                                );
+                            }
+                            catch (...)
+                            {
+                                OutputDebugString(L"Front facting spatial images (front left and front right) couldn't be sent to the Rosbridge websocket!\n");
+                                failedFrames++;
+                                if (failedFrames >= 5)
+                                {
+                                    OutputDebugString(L"Failed sending data to the Rosbridge websocket for more than five times in a row! Assuming connection to be broken.\n");
+                                    pHL2ResearchMode->m_spatialCamerasFrontConnectedToRosbridge = false;
+                                }
+
+                                currentlySendingFrame = false;
                             }
                         }
                     }
