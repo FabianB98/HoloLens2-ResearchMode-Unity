@@ -15,6 +15,8 @@
 #define DEPTH_FRAME_MESSAGE_TYPE L"hololens_msgs/DepthFrame"
 #define STEREO_CAMERA_FRAME_MESSAGE_TYPE L"hololens_msgs/StereoCameraFrame"
 
+#define STEREO_CAMERA_BUFFER_SIZE 5
+
 extern "C"
 HMODULE LoadLibraryA(
     LPCSTR lpLibFileName
@@ -862,53 +864,78 @@ namespace winrt::HL2UnityPlugin::implementation
 
         try
         {
+            // leftFramesBuffer and rightFramesBuffer are ring buffers used to ensure that the images retrieved from the camera streams are in sync.
+            std::array<IResearchModeSensorFrame*, STEREO_CAMERA_BUFFER_SIZE> leftFramesBuffer;
+            std::array<IResearchModeSensorFrame*, STEREO_CAMERA_BUFFER_SIZE> rightFramesBuffer;
+            for (int i = 0; i < STEREO_CAMERA_BUFFER_SIZE; i++)
+            {
+                leftFramesBuffer[i] = nullptr;
+                rightFramesBuffer[i] = nullptr;
+            }
+            int bufferInsertionIndex = 0;
+
             while (pHL2ResearchMode->m_spatialCamerasFrontLoopStarted)
             {
-                IResearchModeSensorFrame* pLFCameraFrame = nullptr;
-                IResearchModeSensorFrame* pRFCameraFrame = nullptr;
+                IResearchModeSensorFrame* pLFCameraFrameCurrentFrame;
+                IResearchModeSensorFrame* pRFCameraFrameCurrentFrame;
                 ResearchModeSensorResolution LFResolution;
                 ResearchModeSensorResolution RFResolution;
-                pHL2ResearchMode->m_LFSensor->GetNextBuffer(&pLFCameraFrame);
-				pHL2ResearchMode->m_RFSensor->GetNextBuffer(&pRFCameraFrame);
+                pHL2ResearchMode->m_LFSensor->GetNextBuffer(&pLFCameraFrameCurrentFrame);
+				pHL2ResearchMode->m_RFSensor->GetNextBuffer(&pRFCameraFrameCurrentFrame);
+
+                if (leftFramesBuffer[bufferInsertionIndex]) leftFramesBuffer[bufferInsertionIndex]->Release();
+                if (rightFramesBuffer[bufferInsertionIndex]) rightFramesBuffer[bufferInsertionIndex]->Release();
+
+                leftFramesBuffer[bufferInsertionIndex] = pLFCameraFrameCurrentFrame;
+                rightFramesBuffer[bufferInsertionIndex] = pRFCameraFrameCurrentFrame;
 
                 // get timestamps
                 ResearchModeSensorTimestamp timestamp_left, timestamp_right;
+                pLFCameraFrameCurrentFrame->GetTimeStamp(&timestamp_left);
+                pRFCameraFrameCurrentFrame->GetTimeStamp(&timestamp_right);
+                double timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
+                OutputDebugStringFormat("Latest captured VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
+
+                // Ensure that both images are (at least somewhat) in sync. This is done by comparing each of the two captured images with all images from the other camera
+                // and selecting the image pair with the lowest absolute time difference.
+                std::vector<std::pair<int, int>> indicesToCompare;
+                for (int i = 1; i < STEREO_CAMERA_BUFFER_SIZE; i++)
+                    indicesToCompare.push_back(std::pair<int, int>(bufferInsertionIndex, (bufferInsertionIndex + i) % STEREO_CAMERA_BUFFER_SIZE));
+                for (int i = 1; i < STEREO_CAMERA_BUFFER_SIZE; i++)
+                    indicesToCompare.push_back(std::pair<int, int>((bufferInsertionIndex + i) % STEREO_CAMERA_BUFFER_SIZE, bufferInsertionIndex));
+                
+                std::pair<int, int> bestIndexPair = std::pair<int, int>(bufferInsertionIndex, bufferInsertionIndex);
+                INT64 bestAbsoluteTickDifference = abs(static_cast<INT64>(timestamp_left.HostTicks) - static_cast<INT64>(timestamp_right.HostTicks));
+                for (int i = 0; i < indicesToCompare.size(); i++)
+                {
+                    IResearchModeSensorFrame* leftFrame = leftFramesBuffer[indicesToCompare[i].first];
+                    IResearchModeSensorFrame* rightFrame = rightFramesBuffer[indicesToCompare[i].second];
+
+                    if (leftFrame == nullptr || rightFrame == nullptr)
+                        continue;
+
+                    ResearchModeSensorTimestamp timestampLeftToCompare, timestampRightToCompare;
+                    leftFrame->GetTimeStamp(&timestampLeftToCompare);
+                    rightFrame->GetTimeStamp(&timestampRightToCompare);
+
+                    INT64 absoluteTickDifference = abs(static_cast<INT64>(timestampLeftToCompare.HostTicks) - static_cast<INT64>(timestampRightToCompare.HostTicks));
+                    if (absoluteTickDifference < bestAbsoluteTickDifference)
+                    {
+                        bestIndexPair = indicesToCompare[i];
+                        bestAbsoluteTickDifference = absoluteTickDifference;
+                    }
+                }
+
+                bufferInsertionIndex = (bufferInsertionIndex + 1) % STEREO_CAMERA_BUFFER_SIZE;
+
+                IResearchModeSensorFrame* pLFCameraFrame = leftFramesBuffer[bestIndexPair.first];
+                IResearchModeSensorFrame* pRFCameraFrame = rightFramesBuffer[bestIndexPair.second];
+                OutputDebugStringFormat("Paired left image at index %i with right image at index %i.\n", bestIndexPair.first, bestIndexPair.second);
+
                 pLFCameraFrame->GetTimeStamp(&timestamp_left);
                 pRFCameraFrame->GetTimeStamp(&timestamp_right);
-
-                // Ensure that both images are in sync. Even though this should work in theory, it isn't much of help in practice... During testing, I noticed that there
-                // is usually a delay of one frame (i.e. ~33.3 milliseconds) between the two images, where sometimes the left image was one frame behind the right image or
-                // vice versa. In theory, it should be enough in this case to simply skip one frame of one side to compensate for this misalignment. However, when doing so,
-                // there is almost every time still a difference of one frame between the two images, just the other way around than before... This results in an alternating
-                // pattern where the left image is one frame behind the right image, then the right image is one frame behind the left image and so on. From time to time the
-                // timestamps of the images would finally match up. However, this happened only about two or three times every minute during my tests, which is definitely
-                // way too rarely for stereo vision in real time... Therefore, this block of code is commented out. I chose to left it here, so that anyone reading this may
-                // test this is able to reproduce what I just described.
-                //double timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
-                //while (abs(timeDifferenceMillis) > 20.0)
-                //{
-                //    if (timeDifferenceMillis > 0.0)
-                //    {
-                //        // Left image is more than 20 milliseconds newer than the right image. This means that the image streams are out of sync (VLC cameras capture
-                //        // 30 frames per second, i.e. one frame each ~33.3 milliseconds). To compensate for this issue, we skip one frame of the right image stream.
-                //        OutputDebugStringFormat("VLC image streams are %f ms out of sync! Skipping one frame of the right image stream...\n", timeDifferenceMillis);
-                //        pRFCameraFrame->Release();
-                //        pHL2ResearchMode->m_RFSensor->GetNextBuffer(&pRFCameraFrame);
-                //        pRFCameraFrame->GetTimeStamp(&timestamp_right);
-                //    }
-                //    else
-                //    {
-                //        // Right image is more than 20 milliseconds newer than the left image. This means that the image streams are out of sync (VLC cameras capture
-                //        // 30 frames per second, i.e. one frame each ~33.3 milliseconds). To compensate for this issue, we skip one frame of the left image stream.
-                //        OutputDebugStringFormat("VLC image streams are %f ms out of sync! Skipping one frame of the left image stream...\n", -timeDifferenceMillis);
-                //        pLFCameraFrame->Release();
-                //        pHL2ResearchMode->m_LFSensor->GetNextBuffer(&pLFCameraFrame);
-                //        pLFCameraFrame->GetTimeStamp(&timestamp_left);
-                //    }
-                //    
-                //    timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
-                //}
-                //OutputDebugStringFormat("VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
+                timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
+                OutputDebugStringFormat("Selected VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
 
                 // process sensor frame
                 pLFCameraFrame->GetResolution(&LFResolution);
@@ -1264,9 +1291,13 @@ namespace winrt::HL2UnityPlugin::implementation
                 // release space
 				if (pLFFrame) pLFFrame->Release();
 				if (pRFFrame) pRFFrame->Release();
+            }
 
-				if (pLFCameraFrame) pLFCameraFrame->Release();
-				if (pRFCameraFrame) pRFCameraFrame->Release();
+            // release space
+            for (int i = 0; i < STEREO_CAMERA_BUFFER_SIZE; i++)
+            {
+                if (leftFramesBuffer[i]) leftFramesBuffer[i]->Release();
+                if (rightFramesBuffer[i]) rightFramesBuffer[i]->Release();
             }
         }
         catch (...) {}
