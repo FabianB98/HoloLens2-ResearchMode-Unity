@@ -17,6 +17,15 @@
 
 #define STEREO_CAMERA_BUFFER_SIZE 5
 
+#define LONG_THROW_INVALID_MASK 0x80
+#define LONG_THROW_INVALID_OUT_OF_RANGE_NEAR 0x81
+#define LONG_THROW_INVALID_OUT_OF_RANGE_FAR 0x82
+#define LONG_THROW_INVALID_MULTI_PATH_DETECTED 0x84
+#define LONG_THROW_INVALID_EMPTY_SIGNAL 0x88
+#define LONG_THROW_INVALID_FILTER_OUTLIER 0x90
+#define LONG_THROW_INVALID_SIGNAL_SATURATED 0xA0
+#define LONG_THROW_INVALID_OUT_OF_BOUNDS 0xC0
+
 extern "C"
 HMODULE LoadLibraryA(
     LPCSTR lpLibFileName
@@ -676,6 +685,17 @@ namespace winrt::HL2UnityPlugin::implementation
                             }
                         }
 
+                        // Invalidate depth values for which the sigma buffer says that these values are invalid.
+                        for (size_t i = 0; i < outBufferCount; ++i)
+                        {
+                            const bool isInvalid = (pSigma[i] & LONG_THROW_INVALID_MASK) > 0;
+                            if (isInvalid)
+                            {
+                                const bool isOutOfRangeFar = (pSigma[i] & LONG_THROW_INVALID_OUT_OF_RANGE_FAR) == LONG_THROW_INVALID_OUT_OF_RANGE_FAR;
+                                ((UINT16*)pDepth)[i] = isOutOfRangeFar ? 0xFFFF : 0x0000;
+                            }
+                        }
+
                         // Encode depth image in Base64.
                         UINT8* depthBytes = (UINT8*)pDepth;
                         UINT32 depthPixelStride = 2;    // Depth images captured by the HoloLens 2 have 16 bit (= 2 byte) per pixel of depth information.
@@ -893,8 +913,6 @@ namespace winrt::HL2UnityPlugin::implementation
                 ResearchModeSensorTimestamp timestamp_left, timestamp_right;
                 pLFCameraFrameCurrentFrame->GetTimeStamp(&timestamp_left);
                 pRFCameraFrameCurrentFrame->GetTimeStamp(&timestamp_right);
-                double timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
-                OutputDebugStringFormat("Latest captured VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
 
                 // Ensure that both images are (at least somewhat) in sync. This is done by comparing each of the two captured images with all images from the other camera
                 // and selecting the image pair with the lowest absolute time difference.
@@ -930,12 +948,9 @@ namespace winrt::HL2UnityPlugin::implementation
 
                 IResearchModeSensorFrame* pLFCameraFrame = leftFramesBuffer[bestIndexPair.first];
                 IResearchModeSensorFrame* pRFCameraFrame = rightFramesBuffer[bestIndexPair.second];
-                OutputDebugStringFormat("Paired left image at index %i with right image at index %i.\n", bestIndexPair.first, bestIndexPair.second);
 
                 pLFCameraFrame->GetTimeStamp(&timestamp_left);
                 pRFCameraFrame->GetTimeStamp(&timestamp_right);
-                timeDifferenceMillis = (static_cast<double>(timestamp_left.HostTicks) - static_cast<double>(timestamp_right.HostTicks)) / 10000.0;
-                OutputDebugStringFormat("Selected VLC images have a time difference of %f ms.\n", timeDifferenceMillis);
 
                 // process sensor frame
                 pLFCameraFrame->GetResolution(&LFResolution);
