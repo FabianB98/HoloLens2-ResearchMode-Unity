@@ -1,26 +1,30 @@
 # HoloLens2-ResearchMode-Unity
 Unity Plugin for using research mode functionality in HoloLens 2. Modified based on [HoloLens2ForCV](https://github.com/microsoft/HoloLens2ForCV).
 
+In order to use it with the MOT approaches implemented for my Master's thesis, compile the Unity sample contained in this repository and install it on the HoloLens 2. You may need to change the URL under which the application tries to connect to a Rosbridge server first. This can be done from within Unity in the scene graph (before installing the application on the HoloLens 2). Alternatively you could also open UnitySample\Assets\Scenes\PointCloudSample.unity with a text editor of your choice, search for "rosbridgeUri" (without the quotation marks) and modify the IP address there.
+
+After the application was successfully installed on the HoloLens 2, start it and click on the corresponding buttons in the button panel to start streaming the data obtained by the depth sensor and/or the two forward facing VLC cameras to ROS. The text shown at the top of the HUD will tell you whether the application is connected to the Rosbridge server. Please note that it may take up to a few seconds before the UI updates to indicate that the connection was successfully established.
+
 ![Depth Map Example](https://github.com/petergu684/HoloLens2-ResearchMode-Unity/blob/master/DepthMapExample.jpg)
 
-Skeleton to wrap HoloLens 2 research mode api into Windows Runtime extension. 
+Skeleton to wrap HoloLens 2 research mode api into Windows Runtime extension.
 
 To use it in Unity,
 - Build this project (ARM64,Release) and copy the .dll and .winmd files in `HL2UnityPlugin\ARM64\Release\HL2UnityPlugin` into `Assets/Plugins/WSA/ARM64` folder of your Unity project.
 - Change the architecture in your Unity build settings to be ARM64.
 - After building the visual studio solution from Unity, go to `App/[Project name]/Package.appxmanifest` and add the restricted capability to the manifest file. (Same as what you would do to enable research mode on HoloLens 1, reference: http://akihiro-document.azurewebsites.net/post/hololens_researchmode2/)
-```xml 
-<Package 
-  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest" 
-  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" 
-  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2" 
-  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3" 
-  xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4" 
-  xmlns:iot="http://schemas.microsoft.com/appx/manifest/iot/windows10" 
-  xmlns:mobile="http://schemas.microsoft.com/appx/manifest/mobile/windows10" 
-  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" 
-  IgnorableNamespaces="uap uap2 uap3 uap4 mp mobile iot rescap" 
-  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"> 
+```xml
+<Package
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4"
+  xmlns:iot="http://schemas.microsoft.com/appx/manifest/iot/windows10"
+  xmlns:mobile="http://schemas.microsoft.com/appx/manifest/mobile/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap2 uap3 uap4 mp mobile iot rescap"
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">
 ```
 
 ```xml
@@ -34,7 +38,7 @@ To use it in Unity,
     <DeviceCapability Name="webcam" />
   </Capabilities>
 ```
-`<DeviceCapability Name="backgroundSpatialPerception"/>` is only necessary if you use IMU sensor. 
+`<DeviceCapability Name="backgroundSpatialPerception"/>` is only necessary if you use IMU sensor.
 - Save the changes and deploy the solution to your HoloLens 2.
 
 
